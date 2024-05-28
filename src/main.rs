@@ -15,10 +15,7 @@ use gdbstub::{
 use log::{debug, info, LevelFilter, SetLoggerError};
 use simple_logger::SimpleLogger;
 use std::{
-    io::ErrorKind,
-    net::{SocketAddr, TcpStream},
-    num::ParseIntError,
-    str::FromStr,
+    fmt::{Debug, Display}, io::ErrorKind, net::{SocketAddr, TcpStream}, num::ParseIntError, str::FromStr
 };
 use usbgecko::{BreakpointStatus, USBGeckoDevice, USBGeckoError};
 
@@ -28,6 +25,46 @@ use crate::usbgecko::{UpdateFn, WiiStatus};
 
 pub fn init_logger(level: LevelFilter) -> Result<(), SetLoggerError> {
     log::set_boxed_logger(Box::new(SimpleLogger::default())).map(|()| log::set_max_level(level))
+}
+
+#[derive(Debug)]
+enum GeckoDBError<T, C> {
+    IoError(std::io::Error),
+    USBGeckoError(USBGeckoError),
+    GDBStubError(GdbStubError<T, C>)
+}
+
+impl<T, C> Display for GeckoDBError<T, C>
+where
+    T: Display,
+    C: Display,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GeckoDBError::IoError(e) => write!(f, "Error with the network connection to the USBGecko: {}", e),
+            GeckoDBError::USBGeckoError(e) => write!(f, "Error with the USBGecko device: {}", e),
+            GeckoDBError::GDBStubError(e) => write!(f, "Error with the GDBStub: {}", e),
+        }
+    }
+}
+
+impl<T, C> std::error::Error for GeckoDBError<T, C>
+where
+    T: Debug + Display,
+    C: Debug + Display,
+{
+}
+
+impl<T, C> From<GdbStubError<T, C>> for GeckoDBError<T, C> {
+    fn from(value: GdbStubError<T, C>) -> Self {
+        GeckoDBError::GDBStubError(value)
+    }
+}
+
+impl<T, C> From<USBGeckoError> for GeckoDBError<T, C> {
+    fn from(value: USBGeckoError) -> Self {
+        GeckoDBError::USBGeckoError(value)
+    }
 }
 
 struct GlobalEventLoop {}
@@ -107,10 +144,10 @@ impl<'a> GdbServer<'a> {
 
 fn run_server(
     parser: &mut Parser,
-) -> Result<(), GdbStubError<USBGeckoError, <TcpStream as Connection>::Error>> {
+) -> Result<(), GeckoDBError<USBGeckoError, <TcpStream as Connection>::Error>> {
     let port: u16 = 2159;
     let listener = std::net::TcpListener::bind(format!("0.0.0.0:{}", port))
-        .or_else(|err| Err(GdbStubError::ConnectionInit(err)))?;
+        .or_else(|err| Err(GeckoDBError::IoError(err)))?;
     loop {
         match listener.accept() {
             Ok((stream, _)) => {
@@ -140,11 +177,11 @@ fn run_server(
     Ok(())
 }
 
-impl<E> From<USBGeckoError> for GdbStubError<USBGeckoError, E> {
-    fn from(err: USBGeckoError) -> Self {
-        GdbStubError::TargetError(err)
-    }
-}
+// impl<E> From<USBGeckoError> for GdbStubError<USBGeckoError, E> {
+//     fn from(err: USBGeckoError) -> Self {
+//         GdbStubError::TargetError(err);
+//     }
+// }
 
 #[derive(Debug)]
 struct BreakAddr(u32);
@@ -194,7 +231,7 @@ impl From<u32> for BreakAddr {
     }
 }
 
-fn main() -> Result<(), GdbStubError<USBGeckoError, <TcpStream as Connection>::Error>> {
+fn main() -> Result<(), GeckoDBError<USBGeckoError, <TcpStream as Connection>::Error>> {
     let mut verbose = LevelFilter::Warn;
     let mut device_addr: Option<SocketAddr> = None;
     let mut break_addr: Option<BreakAddr> = None;
@@ -280,7 +317,7 @@ fn main() -> Result<(), GdbStubError<USBGeckoError, <TcpStream as Connection>::E
     parser.interrupt()?;
     debug!("Registers: {:08x?}", parser.get_device().get_registers()?);
     let result = run_server(&mut parser);
-    parser.get_device().resume()?;
+    let _ = parser.get_device().resume();
     debug!("QUITTING");
     result
 }

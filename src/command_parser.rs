@@ -243,14 +243,14 @@ impl SingleThreadBase for Parser {
         &mut self,
         start_addr: <Self::Arch as gdbstub::arch::Arch>::Usize,
         data: &mut [u8],
-    ) -> gdbstub::target::TargetResult<(), Self> {
+    ) -> gdbstub::target::TargetResult<usize, Self> {
         debug!("read_addrs: start_addr = {:08x}", start_addr);
         if !((start_addr >= 0x80000000 && start_addr + (data.len() as u32) < 0x81800000)
             || (start_addr > 0x90000000 && start_addr + (data.len() as u32) < 0x94000000))
         {
             warn!("Invalid address requested {:08x}", start_addr);
             data.fill(0x00);
-            return Ok(());
+            return Ok(data.len());
         }
         let d = self.gecko.dump(
             start_addr,
@@ -259,10 +259,10 @@ impl SingleThreadBase for Parser {
         )?;
         if d.len() == 0 {
             warn!("no data received");
-            return Ok(());
+            return Ok(0);
         }
         data.copy_from_slice(&d[..data.len()]);
-        Ok(())
+        Ok(data.len())
     }
 
     fn write_addrs(
